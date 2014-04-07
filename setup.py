@@ -19,7 +19,7 @@ class Tox(Command):
 
 
 setup(
-    name="kafka-python",
+    name="kafka-python-lf",
     version="0.9.0",
 
     install_requires=["distribute"],
