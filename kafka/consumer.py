@@ -435,7 +435,6 @@ class SimpleConsumer(Consumer):
                 self.got_error = True
                 self.error = e
                 self.stop()
-                raise
             except Exception as e:
                 self.got_error = True
                 self.error = e
