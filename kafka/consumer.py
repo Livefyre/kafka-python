@@ -145,7 +145,7 @@ class Consumer(object):
 
             for partition in partitions:
                 offset = self.offsets[partition]
-                log.debug("Commit offset %d in SimpleConsumer: "
+                log.info("Commit offset %d in SimpleConsumer: "
                           "group=%s, topic=%s, partition=%s" %
                           (offset, self.group, self.topic, partition))
 
