@@ -167,8 +167,16 @@ class ConsumerNoMoreData(KafkaError):
     pass
 
 
-class MessageTooLargeError(KafkaError):
-    pass
+class BufferTooLargeError(KafkaError):
+
+    def __init__(self, topic, partition, old_offset, new_offset):
+        self.topic = topic
+        self.partition = partition
+        self.old_offset = old_offset
+        self.new_offset = new_offset
+
+    def __repr__(self):
+        return 'topic: {0}, partition: {1}, old_offset: {2}, new_offset: {3}'.format(self.topic, self.partition, self.old_offset, self.new_offset)
 
 
 class ProtocolError(KafkaError):

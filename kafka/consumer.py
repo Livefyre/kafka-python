@@ -17,7 +17,7 @@ from kafka.common import (
     OffsetFetchRequest,
     ConsumerFetchSizeTooSmall,
     ConsumerNoMoreData,
-    MessageTooLargeError
+    BufferTooLargeError
 )
 
 from kafka.util import ReentrantTimer
@@ -31,7 +31,7 @@ FETCH_DEFAULT_BLOCK_TIMEOUT = 1
 FETCH_MAX_WAIT_TIME = 100
 FETCH_MIN_BYTES = 4096
 FETCH_BUFFER_SIZE_BYTES = 262144
-MAX_FETCH_BUFFER_SIZE_BYTES = FETCH_BUFFER_SIZE_BYTES * 8
+MAX_FETCH_BUFFER_SIZE_BYTES = 157286400  # 104857600(kafka socket.request.max.bytes) * 1.5
 
 ITER_TIMEOUT_SECONDS = 60
 NO_MESSAGES_WAIT_TIME_SECONDS = 0.1
@@ -281,7 +281,7 @@ class SimpleConsumer(Consumer):
         """
         self.partition_info = True
 
-    def seek(self, offset, whence):
+    def seek(self, offset, whence, input_partition=None):
         """
         Alter the current offset in the consumer, similar to fseek
 
@@ -293,25 +293,40 @@ class SimpleConsumer(Consumer):
         """
 
         if whence == 1:  # relative to current position
-            for partition, _offset in self.offsets.items():
-                self.offsets[partition] = _offset + offset
+            if input_partition is not None:
+                self.offsets[input_partition] += offset
+            else:
+                for partition, _offset in self.offsets.items():
+                    self.offsets[partition] = _offset + offset
         elif whence in (0, 2):  # relative to beginning or end
             # divide the request offset by number of partitions,
             # distribute the remained evenly
             (delta, rem) = divmod(offset, len(self.offsets))
             deltas = {}
-            for partition, r in izip_longest(self.offsets.keys(),
+            if input_partition is not None:
+                # we want this particular partiton offset incremented
+                deltas[input_partition] = offset
+            else:
+                for partition, r in izip_longest(self.offsets.keys(),
                                              repeat(1, rem), fillvalue=0):
-                deltas[partition] = delta + r
+                    deltas[partition] = delta + r
 
             reqs = []
-            for partition in self.offsets.keys():
+            if input_partition is not None:
                 if whence == 0:
-                    reqs.append(OffsetRequest(self.topic, partition, -2, 1))
+                    reqs.append(OffsetRequest(self.topic, input_partition, -2, 1))
                 elif whence == 2:
-                    reqs.append(OffsetRequest(self.topic, partition, -1, 1))
+                    reqs.append(OffsetRequest(self.topic, input_partition, -1, 1))
                 else:
                     pass
+            else:
+                for partition in self.offsets.keys():
+                    if whence == 0:
+                        reqs.append(OffsetRequest(self.topic, partition, -2, 1))
+                    elif whence == 2:
+                        reqs.append(OffsetRequest(self.topic, partition, -1, 1))
+                    else:
+                        pass
 
             resps = self.client.send_offset_request(reqs)
             for resp in resps:
@@ -430,7 +445,7 @@ class SimpleConsumer(Consumer):
         while not self.should_fetch.is_set():
             try:
                 self._fetch()
-            except MessageTooLargeError as e:
+            except BufferTooLargeError as e:
                 # this is a serious issue, bail out
                 self.got_error = True
                 self.error = e
@@ -481,7 +496,10 @@ class SimpleConsumer(Consumer):
                             log.error('Message size exceeded maximum allowed of {0}'.format(MAX_FETCH_BUFFER_SIZE_BYTES))
                             log.error('Current buffer_size is: {0}'.format(self.buffer_size))
                             log.error('topic: {0}, partition: {1}, offset:{2}'.format(self.topic, partition, self.fetch_offsets[partition]))
-                            raise MessageTooLargeError
+                            old_offset = self.fetch_offsets[partition]
+                            self.seek(1, 1, input_partition=partition)
+                            log.error('Incremented offset. New offset is: {0}'.format(self.offsets[partition]))
+                            raise BufferTooLargeError(self.topic, partition, old_offset, self.offsets[partition])
                     else:
                         self.buffer_size = max(self.buffer_size * 2,
                                                self.max_buffer_size)
