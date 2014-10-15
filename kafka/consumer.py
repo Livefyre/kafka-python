@@ -7,14 +7,17 @@ import numbers
 from threading import Lock, Thread, Event
 
 from multiprocessing import Process, Queue as MPQueue, Event as MPEvent, Value
-from Queue import Empty,  Queue
+from Queue import Empty, Queue
 
 import kafka
 from kafka.common import (
     FetchRequest,
-    OffsetRequest, OffsetCommitRequest,
+    OffsetRequest,
+    OffsetCommitRequest,
     OffsetFetchRequest,
-    ConsumerFetchSizeTooSmall, ConsumerNoMoreData
+    ConsumerFetchSizeTooSmall,
+    ConsumerNoMoreData,
+    BufferTooLargeError
 )
 
 from kafka.util import ReentrantTimer
@@ -28,12 +31,13 @@ FETCH_DEFAULT_BLOCK_TIMEOUT = 1
 FETCH_MAX_WAIT_TIME = 100
 FETCH_MIN_BYTES = 4096
 FETCH_BUFFER_SIZE_BYTES = 262144
-MAX_FETCH_BUFFER_SIZE_BYTES = FETCH_BUFFER_SIZE_BYTES * 8
+MAX_FETCH_BUFFER_SIZE_BYTES = 157286400  # 104857600(kafka socket.request.max.bytes) * 1.5
 
 ITER_TIMEOUT_SECONDS = 60
 NO_MESSAGES_WAIT_TIME_SECONDS = 0.1
 
 MAX_QUEUE_SIZE = 10 * 1024
+
 
 class FetchContext(object):
     """
@@ -113,8 +117,8 @@ class Consumer(object):
             for partition in partitions:
                 req = OffsetFetchRequest(topic, partition)
                 (offset,) = self.client.send_offset_fetch_request(group, [req],
-                              callback=get_or_init_offset_callback,
-                              fail_on_error=False)
+                                                                  callback=get_or_init_offset_callback,
+                                                                  fail_on_error=False)
                 self.offsets[partition] = offset
         else:
             for partition in partitions:
@@ -146,8 +150,8 @@ class Consumer(object):
             for partition in partitions:
                 offset = self.offsets[partition]
                 log.info("Commit offset %d in SimpleConsumer: "
-                          "group=%s, topic=%s, partition=%s" %
-                          (offset, self.group, self.topic, partition))
+                         "group=%s, topic=%s, partition=%s" %
+                         (offset, self.group, self.topic, partition))
 
                 reqs.append(OffsetCommitRequest(self.topic, partition,
                                                 offset, None))
@@ -203,6 +207,7 @@ class Consumer(object):
 class DefaultSimpleConsumerException(Exception):
     pass
 
+
 class SimpleConsumer(Consumer):
     """
     A simple consumer implementation that consumes all/specified partitions
@@ -226,6 +231,9 @@ class SimpleConsumer(Consumer):
     iter_timeout:        default None. How much time (in seconds) to wait for a
                          message in the iterator before exiting. None means no
                          timeout, so it will wait forever.
+    skip_buffer_size_error: Skip over the error when the buffer size grows too large.
+                            i.e. BufferTooLargeError. Default: True (i.e. we will increment the
+                                offset by 1 when we encounter this)
 
     Auto commit details:
     If both auto_commit_every_n and auto_commit_every_t are set, they will
@@ -239,7 +247,8 @@ class SimpleConsumer(Consumer):
                  fetch_size_bytes=FETCH_MIN_BYTES,
                  buffer_size=FETCH_BUFFER_SIZE_BYTES,
                  max_buffer_size=MAX_FETCH_BUFFER_SIZE_BYTES,
-                 iter_timeout=None):
+                 iter_timeout=None,
+                 skip_buffer_size_error=True):
         super(SimpleConsumer, self).__init__(
             client, group, topic,
             partitions=partitions,
@@ -264,6 +273,7 @@ class SimpleConsumer(Consumer):
         self.fetch_thread.daemon = True
         self.fetch_thread.start()
         self.got_error = False
+        self.skip_buffer_size_error = skip_buffer_size_error
         self.error = DefaultSimpleConsumerException()
 
     def __repr__(self):
@@ -276,7 +286,7 @@ class SimpleConsumer(Consumer):
         """
         self.partition_info = True
 
-    def seek(self, offset, whence):
+    def seek(self, offset, whence, input_partition=None):
         """
         Alter the current offset in the consumer, similar to fseek
 
@@ -288,25 +298,40 @@ class SimpleConsumer(Consumer):
         """
 
         if whence == 1:  # relative to current position
-            for partition, _offset in self.offsets.items():
-                self.offsets[partition] = _offset + offset
+            if input_partition is not None:
+                self.offsets[input_partition] += offset
+            else:
+                for partition, _offset in self.offsets.items():
+                    self.offsets[partition] = _offset + offset
         elif whence in (0, 2):  # relative to beginning or end
             # divide the request offset by number of partitions,
             # distribute the remained evenly
             (delta, rem) = divmod(offset, len(self.offsets))
             deltas = {}
-            for partition, r in izip_longest(self.offsets.keys(),
-                                             repeat(1, rem), fillvalue=0):
-                deltas[partition] = delta + r
+            if input_partition is not None:
+                # we want this particular partiton offset incremented
+                deltas[input_partition] = offset
+            else:
+                for partition, r in izip_longest(self.offsets.keys(),
+                                                 repeat(1, rem), fillvalue=0):
+                    deltas[partition] = delta + r
 
             reqs = []
-            for partition in self.offsets.keys():
+            if input_partition is not None:
                 if whence == 0:
-                    reqs.append(OffsetRequest(self.topic, partition, -2, 1))
+                    reqs.append(OffsetRequest(self.topic, input_partition, -2, 1))
                 elif whence == 2:
-                    reqs.append(OffsetRequest(self.topic, partition, -1, 1))
+                    reqs.append(OffsetRequest(self.topic, input_partition, -1, 1))
                 else:
                     pass
+            else:
+                for partition in self.offsets.keys():
+                    if whence == 0:
+                        reqs.append(OffsetRequest(self.topic, partition, -2, 1))
+                    elif whence == 2:
+                        reqs.append(OffsetRequest(self.topic, partition, -1, 1))
+                    else:
+                        pass
 
             resps = self.client.send_offset_request(reqs)
             for resp in resps:
@@ -425,6 +450,11 @@ class SimpleConsumer(Consumer):
         while not self.should_fetch.is_set():
             try:
                 self._fetch()
+            except BufferTooLargeError as e:
+                # this is a serious issue, bail out
+                self.got_error = True
+                self.error = e
+                self.stop()
             except Exception as e:
                 self.got_error = True
                 self.error = e
@@ -464,6 +494,18 @@ class SimpleConsumer(Consumer):
                         raise
                     if self.max_buffer_size is None:
                         self.buffer_size *= 2
+                        # although the client has specifies None for max_buffer_size i.e. no limit
+                        # we want to make sure we have an upper bound to how much it grows
+                        # If the buffer has exceed the max, bail out
+                        if self.skip_buffer_size_error:
+                            if self.buffer_size > MAX_FETCH_BUFFER_SIZE_BYTES:
+                                log.error('Message size exceeded maximum allowed of {0}'.format(MAX_FETCH_BUFFER_SIZE_BYTES))
+                                log.error('Current buffer_size is: {0}'.format(self.buffer_size))
+                                log.error('topic: {0}, partition: {1}, offset:{2}'.format(self.topic, partition, self.fetch_offsets[partition]))
+                                old_offset = self.fetch_offsets[partition]
+                                self.seek(1, 1, input_partition=partition)
+                                log.error('Incremented offset. New offset is: {0}'.format(self.offsets[partition]))
+                                raise BufferTooLargeError(self.topic, partition, old_offset, self.offsets[partition])
                     else:
                         self.buffer_size = max(self.buffer_size * 2,
                                                self.max_buffer_size)
@@ -483,6 +525,7 @@ class SimpleConsumer(Consumer):
                     self.error = e
                     self.stop()
                 partitions = retry_partitions
+
 
 def _mp_consume(client, group, topic, chunk, queue, start, exit, pause, size):
     """

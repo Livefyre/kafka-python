@@ -167,6 +167,18 @@ class ConsumerNoMoreData(KafkaError):
     pass
 
 
+class BufferTooLargeError(KafkaError):
+
+    def __init__(self, topic, partition, old_offset, new_offset):
+        self.topic = topic
+        self.partition = partition
+        self.old_offset = old_offset
+        self.new_offset = new_offset
+
+    def __repr__(self):
+        return 'topic: {0}, partition: {1}, old_offset: {2}, new_offset: {3}'.format(self.topic, self.partition, self.old_offset, self.new_offset)
+
+
 class ProtocolError(KafkaError):
     pass
 
@@ -176,20 +188,20 @@ class UnsupportedCodecError(KafkaError):
 
 
 kafka_errors = {
-    -1 : UnknownError,
-    1  : OffsetOutOfRangeError,
-    2  : InvalidMessageError,
-    3  : UnknownTopicOrPartitionError,
-    4  : InvalidFetchRequestError,
-    5  : LeaderNotAvailableError,
-    6  : NotLeaderForPartitionError,
-    7  : RequestTimedOutError,
-    8  : BrokerNotAvailableError,
-    9  : ReplicaNotAvailableError,
-    10 : MessageSizeTooLargeError,
-    11 : StaleControllerEpochError,
-    12 : OffsetMetadataTooLargeError,
-    13 : StaleLeaderEpochCodeError,
+    -1: UnknownError,
+    1: OffsetOutOfRangeError,
+    2: InvalidMessageError,
+    3: UnknownTopicOrPartitionError,
+    4: InvalidFetchRequestError,
+    5: LeaderNotAvailableError,
+    6: NotLeaderForPartitionError,
+    7: RequestTimedOutError,
+    8: BrokerNotAvailableError,
+    9: ReplicaNotAvailableError,
+    10: MessageSizeTooLargeError,
+    11: StaleControllerEpochError,
+    12: OffsetMetadataTooLargeError,
+    13: StaleLeaderEpochCodeError,
 }
 
 
@@ -197,4 +209,3 @@ def check_error(response):
     error = kafka_errors.get(response.error)
     if error:
         raise error(response)
-
