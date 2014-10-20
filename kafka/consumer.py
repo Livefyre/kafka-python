@@ -262,7 +262,7 @@ class SimpleConsumer(Consumer):
                              (buffer_size, max_buffer_size))
         self.buffer_size = buffer_size
         self.max_buffer_size = max_buffer_size
-        self.partition_info = False     # Do not return partition info in msgs
+        self.partition_info = True  # We want partition info back !
         self.fetch_max_wait_time = FETCH_MAX_WAIT_TIME
         self.fetch_min_bytes = fetch_size_bytes
         self.fetch_offsets = self.offsets.copy()
