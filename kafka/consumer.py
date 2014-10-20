@@ -248,6 +248,7 @@ class SimpleConsumer(Consumer):
                  buffer_size=FETCH_BUFFER_SIZE_BYTES,
                  max_buffer_size=MAX_FETCH_BUFFER_SIZE_BYTES,
                  iter_timeout=None,
+                 partition_info=False,
                  skip_buffer_size_error=True):
         super(SimpleConsumer, self).__init__(
             client, group, topic,
@@ -262,7 +263,7 @@ class SimpleConsumer(Consumer):
                              (buffer_size, max_buffer_size))
         self.buffer_size = buffer_size
         self.max_buffer_size = max_buffer_size
-        self.partition_info = False     # Do not return partition info in msgs
+        self.partition_info = partition_info
         self.fetch_max_wait_time = FETCH_MAX_WAIT_TIME
         self.fetch_min_bytes = fetch_size_bytes
         self.fetch_offsets = self.offsets.copy()
