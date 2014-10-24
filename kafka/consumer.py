@@ -368,7 +368,7 @@ class SimpleConsumer(Consumer):
             result = self._get_message(block, timeout, get_partition_info=True,
                                        update_offset=False)
             if result:
-                partition, message = result
+                partition, message, high_water_mark = result
                 if self.partition_info:
                     messages.append(result)
                 else:
@@ -405,7 +405,7 @@ class SimpleConsumer(Consumer):
         if self.got_error:
             raise self.error
         try:
-            partition, message = self.queue.get(timeout=timeout)
+            partition, message, high_water_mark = self.queue.get(timeout=timeout)
 
             if update_offset:
                 # Update partition offset
@@ -418,7 +418,7 @@ class SimpleConsumer(Consumer):
             if get_partition_info is None:
                 get_partition_info = self.partition_info
             if get_partition_info:
-                return partition, message
+                return partition, message, high_water_mark
             else:
                 return message
         except Empty:
@@ -482,10 +482,11 @@ class SimpleConsumer(Consumer):
             retry_partitions = set()
             for resp in responses:
                 partition = resp.partition
+                high_water_mark = resp.highwaterMark
                 try:
                     for message in resp.messages:
                         # Put the message in our queue
-                        self.queue.put((partition, message), block=True)
+                        self.queue.put((partition, message, high_water_mark), block=True)
                         self.fetch_offsets[partition] = message.offset + 1
                 except ConsumerFetchSizeTooSmall:
                     if (self.max_buffer_size is not None and
@@ -691,7 +692,7 @@ class MultiProcessConsumer(Consumer):
                 # a chance to run and put some messages in the queue
                 # TODO: This is a hack and will make the consumer block for
                 # at least one second. Need to find a better way of doing this
-                partition, message = self.queue.get(block=True, timeout=1)
+                partition, message, high_water_mark = self.queue.get(block=True, timeout=1)
             except Empty:
                 break
 
@@ -736,7 +737,7 @@ class MultiProcessConsumer(Consumer):
                 self.start.set()
 
             try:
-                partition, message = self.queue.get(block, timeout)
+                partition, message, high_water_mark = self.queue.get(block, timeout)
             except Empty:
                 break
 
