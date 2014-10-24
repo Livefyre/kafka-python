@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+from collections import namedtuple
 from itertools import izip_longest, repeat
 import logging
 import time
@@ -37,6 +38,7 @@ ITER_TIMEOUT_SECONDS = 60
 NO_MESSAGES_WAIT_TIME_SECONDS = 0.1
 
 MAX_QUEUE_SIZE = 10 * 1024
+META = namedtuple("meta", ["partition", "high_water_mark"])
 
 
 class FetchContext(object):
@@ -368,12 +370,12 @@ class SimpleConsumer(Consumer):
             result = self._get_message(block, timeout, get_partition_info=True,
                                        update_offset=False)
             if result:
-                partition, message, high_water_mark = result
+                meta, message = result
                 if self.partition_info:
                     messages.append(result)
                 else:
                     messages.append(message)
-                new_offsets[partition] = message.offset + 1
+                new_offsets[meta.partition] = message.offset + 1
                 count -= 1
             else:
                 # Ran out of messages for the last request.
@@ -405,11 +407,11 @@ class SimpleConsumer(Consumer):
         if self.got_error:
             raise self.error
         try:
-            partition, message, high_water_mark = self.queue.get(timeout=timeout)
+            meta, message = self.queue.get(timeout=timeout)
 
             if update_offset:
                 # Update partition offset
-                self.offsets[partition] = message.offset + 1
+                self.offsets[meta.partition] = message.offset + 1
 
                 # Count, check and commit messages if necessary
                 self.count_since_commit += 1
@@ -418,7 +420,7 @@ class SimpleConsumer(Consumer):
             if get_partition_info is None:
                 get_partition_info = self.partition_info
             if get_partition_info:
-                return partition, message, high_water_mark
+                return meta, message
             else:
                 return message
         except Empty:
@@ -486,7 +488,8 @@ class SimpleConsumer(Consumer):
                 try:
                     for message in resp.messages:
                         # Put the message in our queue
-                        self.queue.put((partition, message, high_water_mark), block=True)
+                        meta = META(partition, high_water_mark)
+                        self.queue.put((meta, message), block=True)
                         self.fetch_offsets[partition] = message.offset + 1
                 except ConsumerFetchSizeTooSmall:
                     if (self.max_buffer_size is not None and
@@ -692,12 +695,12 @@ class MultiProcessConsumer(Consumer):
                 # a chance to run and put some messages in the queue
                 # TODO: This is a hack and will make the consumer block for
                 # at least one second. Need to find a better way of doing this
-                partition, message, high_water_mark = self.queue.get(block=True, timeout=1)
+                meta, message = self.queue.get(block=True, timeout=1)
             except Empty:
                 break
 
             # Count, check and commit messages if necessary
-            self.offsets[partition] = message.offset + 1
+            self.offsets[meta.partition] = message.offset + 1
             self.start.clear()
             self.count_since_commit += 1
             self._auto_commit()
@@ -737,12 +740,12 @@ class MultiProcessConsumer(Consumer):
                 self.start.set()
 
             try:
-                partition, message, high_water_mark = self.queue.get(block, timeout)
+                meta, message = self.queue.get(block, timeout)
             except Empty:
                 break
 
             messages.append(message)
-            new_offsets[partition] = message.offset + 1
+            new_offsets[meta.partition] = message.offset + 1
             count -= 1
             if timeout is not None:
                 timeout = max_time - time.time()
