@@ -33,6 +33,10 @@ else:
 BROKER_IDS_PATH = 'brokers/ids/'      # Path where kafka stores broker info
 PARTITIONER_PATH = 'python/kafka/'    # Path to use for consumer co-ordination
 DEFAULT_TIME_BOUNDARY = 10
+# how many attempts to create a valid partition
+MAX_PARTITION_ALLOCATION_ATTEMPTS = 100
+# how much time to wait to create a valid partition
+MAX_PARTITION_ALLOCATION_TIME = 120  # in seconds
 
 # Allocation states
 ALLOCATION_COMPLETED = -1
@@ -70,7 +74,7 @@ def get_client(zkclient, chroot='/'):
     Given a zookeeper client, return a KafkaClient instance for use
     """
     brokers = _get_brokers(zkclient, chroot=chroot)
-    brokers = ["%s:%s"%(host, port) for (host, port) in brokers]
+    brokers = ["%s:%s" % (host, port) for (host, port) in brokers]
     return KafkaClient(brokers)
 
 
@@ -139,6 +143,7 @@ class ZKeyedProducer(ZProducer):
 
     def send(self, key, msg):
         self.producer.send(key, msg)
+
 
 class DefaultZSimpleConsumerException(Exception):
     pass
@@ -214,7 +219,6 @@ class ZSimpleConsumer(object):
 
         #self.allocated = [ALLOCATION_CHANGING] * len(partitions)
 
-
         self.path = os.path.join(chroot, PARTITIONER_PATH, topic, group)
         log.debug("Using path %s for co-ordination" % self.path)
 
@@ -225,6 +229,8 @@ class ZSimpleConsumer(object):
                                      group,
                                      topic,
                                      **kwargs)
+        self.consumer_topic = topic
+        self.consumer_group = group
 
         # Keep monitoring for changes
 
@@ -286,9 +292,9 @@ class ZSimpleConsumer(object):
 
     def _get_new_partitioner(self):
         return self.zkclient.SetPartitioner(path=self.path,
-                                                   set=self.partitions,
-                                                   identifier=self.identifier,
-                                                   time_boundary=self.time_boundary)
+                                            set=self.partitions,
+                                            identifier=self.identifier,
+                                            time_boundary=self.time_boundary)
 
     def _check_and_allocate(self):
         """
@@ -299,18 +305,18 @@ class ZSimpleConsumer(object):
 
         old = None
 
-
         # Set up the partitioner
         partitioner = self._get_new_partitioner()
 
         # Once allocation is done, sleep for some time between each checks
         sleep_time = self.time_boundary / 2.0
 
-
+        partition_allocation_attempt = 0
+        partition_allocation_start_time = time.time()
         # Keep running the allocation logic till we are asked to exit
         while not self.exit.is_set():
 
-            log.info("ZK Partitoner state: %s"%partitioner.state)
+            log.info("ZK Partitoner state: %s, topic: %s, group: %s" % (partitioner.state, self.consumer_topic, self.consumer_group))
             try:
                 if partitioner.acquired:
                     # A new set of partitions has been acquired
@@ -351,15 +357,37 @@ class ZSimpleConsumer(object):
 
                 elif partitioner.allocating:
                     # We have to wait till the partition is allocated
-                    log.info("Waiting for partition allocation")
+                    partition_allocation_attempt += 1
+                    partition_allocation_end_time = time.time()
+                    log.info("Waiting for partition allocation, topic: {0}, group: {1}, count: {2}, time: {3}".format(
+                             self.consumer_topic,
+                             self.consumer_group,
+                             partition_allocation_attempt,
+                             partition_allocation_end_time - partition_allocation_start_time))
+                    if partition_allocation_attempt > MAX_PARTITION_ALLOCATION_ATTEMPTS or \
+                       partition_allocation_end_time - partition_allocation_start_time > MAX_PARTITION_ALLOCATION_TIME:
+                        # we are probably spinning in a loop waiting for allocation
+                        # reset the partitioner
+                        # cleanup old one
+                        partitioner.finish()
+                        # create new one
+                        partitioner = self._get_new_partitioner()
+                        log.info('Creating new partitioner, as the old one was in ALLOCATING state for too many attempts, topic: {0}, group: {1}, count: {2}, time: {3}'.format(
+                                 self.consumer_topic,
+                                 self.consumer_group,
+                                 partition_allocation_attempt,
+                                 partition_allocation_end_time - partition_allocation_start_time))
+                        partition_allocation_attempt = 0
+                        partition_allocation_start_time = time.time()
+
                     partitioner.wait_for_acquire(timeout=1)
             except SessionExpiredError as e:
-                log.error("Zookeeper session expired. Error:%s"%e)
+                log.error("Zookeeper session expired. Error:%s" % e)
                 self.error = e
                 self.got_error = True
                 break
             except Exception as e:
-                log.error("Exception raised in partitioner thread. Error:%s"%e)
+                log.error("Exception raised in partitioner thread. Error:%s" % e)
                 self.error = e
                 self.got_error = True
                 break
