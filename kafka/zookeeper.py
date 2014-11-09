@@ -368,6 +368,9 @@ class ZSimpleConsumer(object):
                        partition_allocation_end_time - partition_allocation_start_time > MAX_PARTITION_ALLOCATION_TIME:
                         # we are probably spinning in a loop waiting for allocation
                         # reset the partitioner
+                        # cleanup old one
+                        partitioner.finish()
+                        # create new one
                         partitioner = self._get_new_partitioner()
                         log.info('Creating new partitioner, as the old one was in ALLOCATING state for too many attempts, topic: {0}, group: {1}, count: {2}, time: {3}'.format(
                                  self.consumer_topic,
