@@ -368,6 +368,15 @@ class ZSimpleConsumer(object):
                        partition_allocation_end_time - partition_allocation_start_time > MAX_PARTITION_ALLOCATION_TIME:
                         # we are probably spinning in a loop waiting for allocation
                         # reset the partitioner
+
+                        # this is the fix put in that solved the issue in QA when there
+                        # were multiple demuxers. TODO: unclear why it did not happen with
+                        # chronos / picasso which also use zookeeper client and have multiple
+                        # instances. (Maybe just luck?)
+                        if self.consumer is not None:
+                            self.consumer.stop()
+                        partitioner.release_set()
+
                         # cleanup old one
                         partitioner.finish()
                         # create new one
