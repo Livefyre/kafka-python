@@ -115,16 +115,12 @@ class Consumer(object):
             except kafka.common.UnknownTopicOrPartitionError:
                 return 0
 
-        if auto_commit:
-            for partition in partitions:
-                req = OffsetFetchRequest(topic, partition)
-                (offset,) = self.client.send_offset_fetch_request(group, [req],
-                                                                  callback=get_or_init_offset_callback,
-                                                                  fail_on_error=False)
-                self.offsets[partition] = offset
-        else:
-            for partition in partitions:
-                self.offsets[partition] = 0
+        for partition in partitions:
+            req = OffsetFetchRequest(topic, partition)
+            (offset,) = self.client.send_offset_fetch_request(group, [req],
+                                                              callback=get_or_init_offset_callback,
+                                                              fail_on_error=False)
+            self.offsets[partition] = offset
 
     def commit(self, partitions=None):
         """
@@ -162,6 +158,19 @@ class Consumer(object):
             for resp in resps:
                 kafka.common.check_error(resp)
 
+            self.count_since_commit = 0
+
+    def commit_offsets(self, offsets):
+        assert not self.auto_commit, 'cannot manually commit offsets if autocommit is True'
+        with self.commit_lock:
+            if self.count_since_commit == 0:
+                return
+            reqs = []
+            for partition, offset in offsets.iteritems():
+                reqs.append(OffsetCommitRequest(self.topic, partition, offset, None))
+            resps = self.client.send_offset_commit_request(self.group, reqs)
+            for resp in resps:
+                kafka.common.check_error(resp)
             self.count_since_commit = 0
 
     def _auto_commit(self):
@@ -630,10 +639,10 @@ class MultiProcessConsumer(Consumer):
         # Variables for managing and controlling the data flow from
         # consumer child process to master
         self.queue = MPQueue(1024)  # Child consumers dump messages into this
-        self.start = MPEvent()        # Indicates the consumers to start fetch
-        self.exit = MPEvent()         # Requests the consumers to shutdown
-        self.pause = MPEvent()        # Requests the consumers to pause fetch
-        self.size = Value('i', 0)   # Indicator of number of messages to fetch
+        self.start = MPEvent()  # Indicates the consumers to start fetch
+        self.exit = MPEvent()  # Requests the consumers to shutdown
+        self.pause = MPEvent()  # Requests the consumers to pause fetch
+        self.size = Value('i', 0)  # Indicator of number of messages to fetch
 
         partitions = self.offsets.keys()
 

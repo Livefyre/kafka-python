@@ -30,8 +30,8 @@ else:
     from kazoo.handlers.threading import SequentialThreadingHandler as kazoo_handler
 
 
-BROKER_IDS_PATH = 'brokers/ids/'      # Path where kafka stores broker info
-PARTITIONER_PATH = 'python/kafka/'    # Path to use for consumer co-ordination
+BROKER_IDS_PATH = 'brokers/ids/'  # Path where kafka stores broker info
+PARTITIONER_PATH = 'python/kafka/'  # Path to use for consumer co-ordination
 DEFAULT_TIME_BOUNDARY = 10
 # how many attempts to create a valid partition
 MAX_PARTITION_ALLOCATION_ATTEMPTS = 100
@@ -217,7 +217,7 @@ class ZSimpleConsumer(object):
         self.client.load_metadata_for_topics(topic)
         self.partitions = set(self.client.topic_partitions[topic])
 
-        #self.allocated = [ALLOCATION_CHANGING] * len(partitions)
+        # self.allocated = [ALLOCATION_CHANGING] * len(partitions)
 
         self.path = os.path.join(chroot, PARTITIONER_PATH, topic, group)
         log.debug("Using path %s for co-ordination" % self.path)
@@ -252,7 +252,7 @@ class ZSimpleConsumer(object):
         self.lock = threading.Lock()
 
         # Initialize the array
-        #self._set_partitions(self.allocated, [], ALLOCATION_CHANGING)
+        # self._set_partitions(self.allocated, [], ALLOCATION_CHANGING)
         self.consumer_state = ALLOCATION_CHANGING
 
         # create consumer id
@@ -450,6 +450,10 @@ class ZSimpleConsumer(object):
     def commit(self):
         if self.consumer:
             self.consumer.commit()
+
+    def commit_offsets(self, offsets):
+        if self.consumer:
+            self.consumer.commit_offsets(offsets)
 
     def seek(self, *args, **kwargs):
         if self.consumer is None:

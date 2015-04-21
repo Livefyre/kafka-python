@@ -8,3 +8,5 @@ env
 servers/*/kafka-bin
 .coverage
 .noseids
+.pydevproject
+.project
