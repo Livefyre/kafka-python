@@ -376,6 +376,7 @@ class ZSimpleConsumer(object):
                         if self.consumer is not None:
                             self.consumer.stop()
                         partitioner.release_set()
+                        old = None
 
                         # cleanup old one
                         partitioner.finish()
