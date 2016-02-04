@@ -273,6 +273,8 @@ class ZSimpleConsumer(object):
         self.partioner_thread.daemon = True
         self.partioner_thread.start()
 
+        self.on_stop_callback = None
+
     def status(self):
         """
         Returns the status of the consumer
@@ -328,6 +330,7 @@ class ZSimpleConsumer(object):
                         log.info("Acquired partitions: %s" % str(new))
                         if len(new) > 0:
                             self.consumer = self.consumer_fact(partitions=new)
+                            self.consumer.register_on_stop_callback(self.on_stop_callback)
                         else:
                             self.consumer = None
                         old = new
@@ -455,6 +458,9 @@ class ZSimpleConsumer(object):
     def commit_offsets(self, offsets):
         if self.consumer:
             self.consumer.commit_offsets(offsets)
+
+    def register_on_stop_callback(self, fn):
+        self.on_stop_callback = fn
 
     def seek(self, *args, **kwargs):
         if self.consumer is None:

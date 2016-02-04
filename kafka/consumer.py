@@ -102,6 +102,11 @@ class Consumer(object):
         self.auto_commit_every_n = auto_commit_every_n
         self.auto_commit_every_t = auto_commit_every_t
 
+        # add callback to be called when stopping consumer -
+        # used in conjunction with ZSimpleConsumer to perform an action
+        # prior to a repartition event.
+        self.on_stop_callback = None
+
         # Set up the auto-commit timer
         if auto_commit is True and auto_commit_every_t is not None:
             self.commit_timer = ReentrantTimer(auto_commit_every_t,
@@ -163,8 +168,6 @@ class Consumer(object):
     def commit_offsets(self, offsets):
         assert not self.auto_commit, 'cannot manually commit offsets if autocommit is True'
         with self.commit_lock:
-            if self.count_since_commit == 0:
-                return
             reqs = []
             for partition, offset in offsets.iteritems():
                 reqs.append(OffsetCommitRequest(self.topic, partition, offset, None))
@@ -172,6 +175,10 @@ class Consumer(object):
             for resp in resps:
                 kafka.common.check_error(resp)
             self.count_since_commit = 0
+
+    def register_on_stop_callback(self, fn):
+        if self.on_stop_callback is None:
+            self.on_stop_callback = fn
 
     def _auto_commit(self):
         """
@@ -189,6 +196,12 @@ class Consumer(object):
         if self.commit_timer is not None:
             self.commit_timer.stop()
             self.commit()
+        if not self.auto_commit and self.on_stop_callback:
+            try:
+                log.info('executing "on_stop_callback"')
+                self.on_stop_callback()
+            except:
+                log.exception('There was an error executing "on_stop_callback"')
 
     def pending(self, partitions=None):
         """
