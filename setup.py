@@ -21,7 +21,7 @@ class Tox(Command):
 
 
 requires = [
-    'kazoo-lf>=2.0.2',
+    'kazoo>=2.2.1',
 ]
 
 install_requires = requires + [
